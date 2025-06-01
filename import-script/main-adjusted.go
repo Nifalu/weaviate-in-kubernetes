@@ -33,7 +33,7 @@ type BatchResult struct {
 	BatchID int
 	Success int
 	Errors  int
-	Error   error // Added to capture the actual error
+	Error   error
 }
 
 func main() {
@@ -108,7 +108,7 @@ func main() {
 		totalErrors += result.Errors
 		batchCount++
 
-		if batchCount%5 == 0 { // Report every 10 batches
+		if batchCount%5 == 0 { // Report every 5 badges
 			elapsed := time.Since(startTime)
 			rate := float64(totalProcessed) / elapsed.Seconds()
 

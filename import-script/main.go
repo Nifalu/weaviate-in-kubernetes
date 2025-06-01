@@ -38,7 +38,6 @@ type BatchResult struct {
 func main() {
 	ctx := context.Background()
 
-	// Configure client for maximum performance
 	cfg := weaviate.Config{
 		Host:   "localhost:30080",
 		Scheme: "http",
@@ -96,7 +95,7 @@ func main() {
 		totalErrors += result.Errors
 		batchCount++
 
-		if batchCount%5 == 0 { // Report every 10 batches
+		if batchCount%5 == 0 {
 			elapsed := time.Since(startTime)
 			rate := float64(totalProcessed) / elapsed.Seconds()
 
@@ -123,7 +122,7 @@ func readBvecsFile(filename string, vectorChan chan<- VectorObject) error {
 	}
 	defer file.Close()
 
-	reader := bufio.NewReaderSize(file, 64*1024) // 64KB buffer for efficient reading
+	reader := bufio.NewReaderSize(file, 64*1024)
 	vectorID := 0
 
 	log.Println("Starting to read bvecs file...")

@@ -1,6 +1,6 @@
 # Weaviate Vector Import Script
 
-This script imports vector data from BVECS format files into Weaviate using parallel batch processing.
+This script imports vector data from BVECS format files into Weaviate using parallel batch processing. I have played around with them and so there are three versions of the script now.
 
 ## Usage
 
@@ -25,7 +25,7 @@ This script imports vector data from BVECS format files into Weaviate using para
 3. **Run the import**:
 
    ```bash
-   go run main.go
+   go run main-adjusted.go
    ```
 
 
