@@ -2,8 +2,7 @@
 
 This "document" should help you how to get a simple [Kubernetes](https://kubernetes.io/) cluster running and install [Weaviate](https://weaviate.io/) on it.
 
-<details>
-<summary><h2>Prerequisites:</h2></summary>
+## Prerequisites:
 
 If not otherwise stated, the following commands should be executed on all individual machines that should be part of the cluster.
 
@@ -75,10 +74,7 @@ sudo systemctl status containerd
 sudo systemctl status kubelet
 ```
 
-</details>
-
-<details>
-<summary><h2>Kubernetes Setup</h2></summary>
+## Kubernetes Setup
 
 The cluster consists of a `Control Plane` and `Worker` nodes.
 
@@ -147,10 +143,9 @@ If so:
 kubectl taint nodes <NODENAME> node-role.kubernetes.io/control-plane:NoSchedule-
 ```
 
-</details>
 
-<details>
-<summary><h2>Install Weaviate</h2></summary>
+
+## Install Weaviate
 
 The following commands should **only** be run on the `control plane` !
 
@@ -184,4 +179,3 @@ kubectl get pods -n weaviate-system
 kubectl get services -n weaviate-system
 ```
 
-</details>
