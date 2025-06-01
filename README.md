@@ -74,6 +74,8 @@ sudo systemctl status containerd
 sudo systemctl status kubelet
 ```
 
+
+
 ## Kubernetes Setup
 
 The cluster consists of a `Control Plane` and `Worker` nodes.
@@ -141,6 +143,44 @@ If so:
 
 ```bash
 kubectl taint nodes <NODENAME> node-role.kubernetes.io/control-plane:NoSchedule-
+```
+
+
+
+## Set up persistant storage for weaviate
+
+### [Longhorn](https://longhorn.io/) Storage 
+
+Longhorn is a distributed block storage system for Kubernetes that we use to provide persistent storage for weaviate. 
+
+### Prerequisites for Longhorn
+
+```bash
+sudo apt install -y open-iscsi
+sudo systemctl enable iscsid
+sudo systemctl start iscsid
+```
+
+### Install Longhorn
+
+```bash
+# Install Longhorn using kubectl
+kubectl apply -f https://raw.githubusercontent.com/longhorn/longhorn/v1.5.3/deploy/longhorn.yaml
+
+# Create namespace if it doesn't exist
+kubectl create namespace longhorn-system
+
+# Wait for Longhorn pods to be ready
+kubectl get pods -n longhorn-system -w
+
+# Verify all components are running
+kubectl get pods -n longhorn-system
+```
+
+### Verify
+
+```bash	
+kubectl get storageclass
 ```
 
 
