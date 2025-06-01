@@ -1,0 +1,111 @@
+# Weaviate 3-Node Sharded Cluster Configuration
+
+# Scale to 3 replicas for sharding
+replicas: 3
+
+# Resources optimized for hardware (24GB RAM, 24 cores per node)
+resources:
+  requests:
+    cpu: "8"       # 8 cores per instance
+    memory: 16Gi   # 16GB per instance
+  limits:
+    cpu: "12"      # Allow burst to 12 cores
+    memory: 20Gi   # Max 20GB per instance
+
+# Clustering and performance environment variables
+env:
+  # Basic Weaviate configuration
+  AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+
+  # Clustering ports
+  CLUSTER_GOSSIP_BIND_PORT: 7000
+  CLUSTER_DATA_BIND_PORT: 7001
+
+  # RAFT clustering configuration for 3 nodes
+  RAFT_BOOTSTRAP_EXPECT: 3
+  RAFT_BOOTSTRAP_TIMEOUT: 600
+
+  # Performance optimizations
+  TRACK_VECTOR_DIMENSIONS: "true"
+  GOGC: 100
+  GOMEMLIMIT: 18GiB  # Leave some headroom from the 20GB limit
+
+  # Batching optimizations
+  QUERY_MAXIMUM_RESULTS: 100000
+
+  # Monitoring
+  PROMETHEUS_MONITORING_ENABLED: "true"
+
+# Large persistent storage for each shard
+storage:
+  size: 2Ti
+  storageClassName: "longhorn"
+
+# Services configuration
+service:
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      nodePort: 30080
+
+grpcService:
+  enabled: true
+  type: LoadBalancer  # Changed from NodePort
+  ports:
+    - name: grpc
+      port: 50051
+      protocol: TCP
+      nodePort: 30051
+
+# Ensure each Weaviate instance runs on a different node
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchLabels:
+          app: weaviate  # Correct label selector
+      topologyKey: kubernetes.io/hostname
+
+# Node selector - allow scheduling on all nodes
+nodeSelector: {}
+
+# Tolerations to allow scheduling on control plane if needed
+tolerations:
+- key: node-role.kubernetes.io/control-plane
+  operator: Exists
+  effect: NoSchedule
+
+# Security context for better security
+containerSecurityContext:
+  runAsUser: 0
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false  # Weaviate needs to write data
+
+# Startup and health check configurations
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  failureThreshold: 30
+
+livenessProbe:
+  initialDelaySeconds: 300
+  periodSeconds: 30
+  failureThreshold: 3
+
+readinessProbe:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 3
+
+# Pod disruption budget for high availability
+podDisruptionBudgets:
+  weaviate:
+    enabled: true
+    spec:
+      minAvailable: 2  # Keep at least 2 nodes running during updates
+
+# Termination grace period
+terminationGracePeriodSeconds: 300
