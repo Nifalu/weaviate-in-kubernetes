@@ -33,10 +33,13 @@ type BatchResult struct {
 	BatchID int
 	Success int
 	Errors  int
+	Error   error // Added to capture the actual error
 }
 
 func main() {
-	ctx := context.Background()
+	// Create a cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Configure client for maximum performance
 	cfg := weaviate.Config{
@@ -65,8 +68,11 @@ func main() {
 	// Start vector reader goroutine
 	go func() {
 		defer close(vectorChan)
-		if err := readBvecsFile(VECTOR_FILE, vectorChan); err != nil {
-			log.Fatalf("Failed to read bvecs file: %v", err)
+		if err := readBvecsFile(ctx, VECTOR_FILE, vectorChan); err != nil {
+			if ctx.Err() == nil { // Only log if not cancelled
+				log.Printf("Failed to read bvecs file: %v", err)
+				cancel() // Cancel context to stop all workers
+			}
 		}
 	}()
 
@@ -76,7 +82,7 @@ func main() {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			batchWorker(ctx, client, workerID, vectorChan, resultChan)
+			batchWorker(ctx, cancel, client, workerID, vectorChan, resultChan)
 		}(i)
 	}
 
@@ -90,8 +96,14 @@ func main() {
 	totalProcessed := 0
 	totalErrors := 0
 	batchCount := 0
+	var firstError error
 
 	for result := range resultChan {
+		if result.Error != nil && firstError == nil {
+			firstError = result.Error
+			cancel() // Stop all processing
+		}
+
 		totalProcessed += result.Success
 		totalErrors += result.Errors
 		batchCount++
@@ -108,15 +120,23 @@ func main() {
 	elapsed := time.Since(startTime)
 	finalRate := float64(totalProcessed) / elapsed.Seconds()
 
-	log.Printf("Import completed!")
+	if firstError != nil {
+		log.Printf("Import stopped due to error: %v", firstError)
+	} else {
+		log.Printf("Import completed!")
+	}
 	log.Printf("Total time: %v", elapsed)
 	log.Printf("Total objects: %d", totalProcessed)
 	log.Printf("Total errors: %d", totalErrors)
 	log.Printf("Average rate: %.2f objects/sec", finalRate)
+
+	if firstError != nil {
+		os.Exit(1)
+	}
 }
 
 // readBvecsFile reads vectors from bvecs format and streams them to the channel
-func readBvecsFile(filename string, vectorChan chan<- VectorObject) error {
+func readBvecsFile(ctx context.Context, filename string, vectorChan chan<- VectorObject) error {
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %v", err)
@@ -129,6 +149,13 @@ func readBvecsFile(filename string, vectorChan chan<- VectorObject) error {
 	log.Println("Starting to read bvecs file...")
 
 	for {
+		// Check if context is cancelled
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		// Read dimension (4 bytes, little endian)
 		var dim uint32
 		err := binary.Read(reader, binary.LittleEndian, &dim)
@@ -153,9 +180,13 @@ func readBvecsFile(filename string, vectorChan chan<- VectorObject) error {
 		}
 
 		// Send to channel (this will block if channel is full, providing backpressure)
-		vectorChan <- VectorObject{
+		select {
+		case vectorChan <- VectorObject{
 			ID:     vectorID,
 			Vector: vector,
+		}:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 
 		vectorID++
@@ -171,12 +202,19 @@ func readBvecsFile(filename string, vectorChan chan<- VectorObject) error {
 }
 
 // batchWorker processes vectors in batches
-func batchWorker(ctx context.Context, client *weaviate.Client, workerID int,
+func batchWorker(ctx context.Context, cancel context.CancelFunc, client *weaviate.Client, workerID int,
 	vectorChan <-chan VectorObject, resultChan chan<- BatchResult) {
 
 	batchID := 0
 
 	for {
+		// Check if context is cancelled
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		// Collect vectors for a batch
 		batch := make([]VectorObject, 0, BATCH_SIZE)
 
@@ -186,6 +224,10 @@ func batchWorker(ctx context.Context, client *weaviate.Client, workerID int,
 	batchLoop:
 		for len(batch) < BATCH_SIZE {
 			select {
+			case <-ctx.Done():
+				batchTimeout.Stop()
+				return
+
 			case vector, ok := <-vectorChan:
 				if !ok {
 					// Channel closed, process remaining batch if any
@@ -207,7 +249,13 @@ func batchWorker(ctx context.Context, client *weaviate.Client, workerID int,
 
 		// Process the batch
 		result := processBatch(ctx, client, workerID, batchID, batch)
-		resultChan <- result
+		
+		// Send result
+		select {
+		case resultChan <- result:
+		case <-ctx.Done():
+			return
+		}
 
 		batchID++
 	}
@@ -240,8 +288,12 @@ func processBatch(ctx context.Context, client *weaviate.Client, workerID, batchI
 
 	results, err := batcher.Do(batchCtx)
 	if err != nil {
-		log.Printf("Worker %d, Batch %d: Failed to import batch: %v", workerID, batchID, err)
-		return BatchResult{BatchID: batchID, Success: 0, Errors: len(vectors)}
+		return BatchResult{
+			BatchID: batchID,
+			Success: 0,
+			Errors:  len(vectors),
+			Error:   fmt.Errorf("Worker %d, Batch %d: Failed to import batch: %v", workerID, batchID, err),
+		}
 	}
 
 	// Count successes and errors
@@ -251,8 +303,13 @@ func processBatch(ctx context.Context, client *weaviate.Client, workerID, batchI
 	for i, result := range results {
 		if result.Result.Errors != nil {
 			errors++
-			log.Printf("Worker %d, Batch %d, Object %d: Import error: %v",
-				workerID, batchID, i, result.Result.Errors)
+			// Return immediately on first error in batch
+			return BatchResult{
+				BatchID: batchID,
+				Success: success,
+				Errors:  errors,
+				Error:   fmt.Errorf("Worker %d, Batch %d, Object %d: Import error: %v", workerID, batchID, i, result.Result.Errors),
+			}
 		} else {
 			success++
 		}
@@ -262,5 +319,6 @@ func processBatch(ctx context.Context, client *weaviate.Client, workerID, batchI
 		BatchID: batchID,
 		Success: success,
 		Errors:  errors,
+		Error:   nil,
 	}
 }
